@@ -1,0 +1,468 @@
+<?php
+/**
+ * @file
+ * Google Analytics Agency installation
+ */
+/**
+ * Implements hook_schema().
+ */
+
+function google_analytics_agency_schema() {
+  $schema = array();
+  $schema['google_analytics_agency'] = array(
+    'fields' => array(
+      'nid' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+      ),
+      'last_send' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+    ),
+    'primary key' => array('nid'),
+  );
+
+  return $schema;
+}
+
+
+/**
+ * Implements hook_install().
+ */
+function google_analytics_agency_install() {
+	// Set default variables.
+  $current = variable_get('mail_system', array('default-system' => 'DefaultMailSystem'));
+  $addition = array('google_analytics_agency' => 'GoogleAgencyMailSystem');
+  variable_set('mail_system', array_merge($current, $addition));
+  // Get localization function for installation as t() may be unavailable.
+  $t = get_t();
+
+  // Give user feedback.
+  drupal_set_message($t('Google Analytics Agency variables created.'));
+
+  $type = array(
+    'type' => 'google_analytics_agency',
+    'name' => $t('Website Report'),
+    'base' => 'node_content',
+     'title_label' => $t('Website Name'),
+    'description' => $t('Website Report'),
+    'custom' => 1,
+    'modified' => 1,
+    'locked' => 0,
+  );
+
+  $type = node_type_set_defaults($type);
+  node_type_save($type);
+
+ //create taxonomy
+  $vocaCompany = (object) array(
+    'name' => $t('Company'),
+    'description' => $t('Company for google analytics agency'),
+    'machine_name' => 'agency_company_taxonomy',
+    'help' => '',
+  );
+  taxonomy_vocabulary_save($vocaCompany);
+  $vocaGroupings = (object) array(
+    'name' => $t('Groupings'),
+    'description' => $t('Groupings for google analytics agency'),
+    'machine_name' => 'agency_groupings_taxonomy',
+    'help' => '',
+  );
+  taxonomy_vocabulary_save($vocaGroupings);
+ // Create a field for taxonomy grouping
+	$fieldGroup = array(
+		'field_name' => 'google_agency_group_email',
+		'type' => 'text',
+		'label' => $t('Group Email')
+		);
+field_create_field($fieldGroup);
+ // Attach the field to our taxonomy entity
+	$instanceGroup = array(
+		'field_name' => 'google_agency_group_email',
+		'entity_type' => 'taxonomy_term',
+		'bundle' => 'agency_groupings_taxonomy',
+		'label' => $t('Group Email'),
+		'description' => $t('Email to send report'),
+		'required' => true,
+		'widget' => array(
+			'type' => 'text_textfield',
+			'weight' => 0
+				)
+			);
+field_create_instance($instanceGroup);
+
+  // Create fields.
+$profile_id = google_analytics_agency_profile_id_list();
+  $fields = array(
+	array(
+      'field_name' => 'field_agency_report_email',
+      'type' => 'text',
+      'cardinality' => 1,
+      'translatable' => TRUE,
+      'settings' => array(
+        'max_length' => 255,
+      ),
+      'translatable' => TRUE,
+      'entity_types' => array(),
+    ),
+	  array(
+	      'field_name' => 'field_agency_email_schedule',
+	      'type' => 'list_text',
+	      'cardinality' => 1,
+	      'translatable' => TRUE,
+	      'locked' => FALSE,
+	      'module' => 'list',
+	      'settings' => array(
+	        'allowed_values' => array(
+	          'daily' => $t('Daily'),
+	          'weekly' => $t('Weekly'),
+	          'monthly' => $t('Monthly'),
+	        ),
+	        'allowed_values_function' => '',
+	      ),
+	      'storage' => array(
+	        'type' => 'field_sql_storage',
+	        'settings' => array(),
+	      ),
+	    ),
+	array(
+      'field_name' => 'field_agency_profile_url',
+      'type' => 'text',
+      'cardinality' => 1,
+      'translatable' => TRUE,
+      'settings' => array(
+        'max_length' => 255,
+      ),
+      'translatable' => TRUE,
+      'entity_types' => array(),
+    ),
+	array(
+      'field_name' => 'agency_profile_id',
+      'type' => 'list_text',
+      'cardinality' => 1,
+      'translatable' => TRUE,
+      'locked' => FALSE,
+      'module' => 'list',
+      'settings' => array(
+		'allowed_values' =>$profile_id,
+      ),
+    ),
+    array(
+      'field_name' => 'agency_company',
+      'type' => 'taxonomy_term_reference',
+      'settings' => array(
+        'allowed_values' => array(
+          array(
+            'vocabulary' => 'agency_company_taxonomy',
+            'parent' => 0
+          ),
+        ),
+      ),
+    ), 
+    array(
+      'field_name' => 'agency_groupings',
+      'type' => 'taxonomy_term_reference',
+      'settings' => array(
+        'allowed_values' => array(
+          array(
+            'vocabulary' => 'agency_groupings_taxonomy',
+            'parent' => 0
+          ),
+        ),
+      ),
+    ),  
+  );
+  foreach ($fields as $field) {
+    field_create_field($field);
+  }
+
+// Create Field Instances.
+  $instances = array();
+  $instances['field_agency_report_email'] = array(
+    'field_name' => 'field_agency_report_email',
+    'entity_type' => 'node',
+    'bundle' => 'google_analytics_agency',
+    'label' => $t('Report Emails'),
+    'required' => TRUE,
+    'description' => $t('Enter email address for report,eg: tom@example.com;john@example.com.'),
+    'widget' => array(
+      'type' => 'text_textfield',
+      'settings' => array(
+        'size' => 60,
+      ),
+      'weight' => 3,
+    ),
+    'settings' => array(
+      'text_processing' => 0,
+    ),
+    'display' => array(
+      'default' => array(
+        'label' => 'above',
+        'type' => 'text_default',
+        'settings' => array(),
+      ),
+    ),
+  );
+  $instances['field_agency_email_schedule'] = array(
+    'field_name' => 'field_agency_email_schedule',
+    'entity_type' => 'node',
+    'label' => $t('Report Email Schedule'),
+    'bundle' => 'google_analytics_agency',
+    'description' => $t('Please select schedule.'),
+    'required' => TRUE,
+	'weight' => 10,
+    'default_value' => array(
+      0 => array(
+        'value' => 'weekly',
+      ),
+    ),
+    'settings' => array(
+      'allowed_values'  => array(
+        'daily' => $t('Daily'),
+        'weekly' => $t('Weekly'),
+        'monthly' => $t('Monthly'),
+      ),
+      'user_register_form' => FALSE,
+    ),
+    'user_register_form' => FALSE,
+    'widget' => array(
+      'active' => 1,
+      'type' => 'options_select',
+      'weight' => 5,
+      'module' => 'list',
+    ),
+
+    'display' => array(
+      'default' => array(
+        'label' => 'hidden',
+        'type' => 'list_default',
+        'module' => 'list',
+        'weight' => 5,
+      ),
+      'teaser' => array(
+        'label' => 'hidden',
+        'type' => 'list_default',
+        'module' => 'list',
+        'weight' => 5,
+      ),
+    ),
+  );
+  $instances['field_agency_profile_url'] = array(
+    'field_name' => 'field_agency_profile_url',
+    'entity_type' => 'node',
+    'bundle' => 'google_analytics_agency',
+    'label' => $t('Website URL'),
+    'required' => FALSE,
+    'widget' => array(
+      'type' => 'text_textfield',
+      'settings' => array(
+        'size' => 60,
+      ),
+      'weight' => -1,
+    ),
+    'settings' => array(
+      'text_processing' => 0,
+    ),
+    'display' => array(
+      'default' => array(
+        'label' => 'above',
+        'type' => 'text_default',
+        'settings' => array(),
+      ),
+    ),
+  );
+  $instances['agency_profile_id']  = array(
+    'field_name' => 'agency_profile_id',
+    'entity_type' => 'node',
+    'label' => $t('Analytics Profile ID'),
+    'bundle' => 'google_analytics_agency',
+    'required' => TRUE,
+    'settings' => array(
+	  'allowed_values' =>$profile_id,
+      'user_register_form' => FALSE,
+    ),
+    'user_register_form' => FALSE,
+    'widget' => array(
+      'active' => 1,
+      'type' => 'options_select',
+      'weight' => 0,
+      'module' => 'list',
+    ),
+
+    'display' => array(
+      'default' => array(
+        'label' => 'hidden',
+        'type' => 'list_default',
+        'module' => 'list',
+        'weight' => -1,
+      ),
+      'teaser' => array(
+        'label' => 'hidden',
+        'type' => 'list_default',
+        'module' => 'list',
+        'weight' => -1,
+      ),
+    ),
+  );
+  $instances['agency_company'] = array(
+    'field_name' => 'agency_company',
+    'entity_type' => 'node',
+    'label' => $t('Company'),
+    'bundle' => 'google_analytics_agency',
+    'required' => TRUE,
+    'widget' => array(
+      'type' => 'options_select',
+      'weight' => 11,
+    ),
+    'display' => array(
+      'default' => array('type' => 'hidden'),
+      'teaser' => array('type' => 'hidden')
+    ),
+  );
+  $instances['agency_groupings'] = array(
+    'field_name' => 'agency_groupings',
+    'entity_type' => 'node',
+    'label' => $t('Grouping'),
+    'bundle' => 'google_analytics_agency',
+    'required' => TRUE,
+    'widget' => array(
+      'type' => 'options_select',
+      'weight' => 12,
+    ),
+    'display' => array(
+      'default' => array('type' => 'hidden'),
+      'teaser' => array('type' => 'hidden')
+    ),
+  );
+
+  foreach ($instances as $instance) {
+    $instance['entity_type'] = 'node';
+    $instance['bundle'] = 'google_analytics_agency';
+    field_create_instance($instance);
+  }
+
+}
+
+
+function google_analytics_agency_profile_id_list(){
+	
+	$account = google_analytics_reports_api_new_gafeed();
+
+	  if ($account && $account->isAuthenticated()) {
+	    $webprops = $account->queryWebProperties()->results->items;
+	    $profiles = $account->queryProfiles()->results->items;
+	    $options = array();
+	    $set_default = FALSE;
+
+	    // Add optgroups for each web property.
+	    if(!empty($profiles)){
+	      foreach ($profiles as $profile) {
+	        $webprop = NULL;
+	        foreach ($webprops as $webprop_value) {
+	          if ($webprop_value->id == $profile->webPropertyId) {
+	            $webprop = $webprop_value;
+	            break;
+	          }
+	        }
+
+	        $options[$profile->id] = theme('google_analytics_reports_api_profile_label', array('profile' => $profile));
+
+	      }
+	    }
+	}
+	
+return $options;
+}
+/**
+ * Set the my_module_default_sports_list() function as the source of the 'default_sports' field
+ */
+function google_analytics_agency_update_7101() {
+	  $t = get_t();
+	 // Create a field for taxonomy grouping
+		$fieldGroup = array(
+			'field_name' => 'google_agency_group_email',
+			'type' => 'text',
+			'label' => $t('Group Email'),
+			);
+	field_create_field($fieldGroup);
+	 // Attach the field to our taxonomy entity
+		$instanceGroup = array(
+			'field_name' => 'google_agency_group_email',
+			'entity_type' => 'taxonomy_term',
+			'bundle' => 'agency_groupings_taxonomy',
+			'label' => $t('Group Email'),
+			'description' => $t('Email to send report'),
+			'required' => false,
+			'widget' => array(
+				'type' => 'text_textfield',
+				'weight' => 0,
+				),
+				);
+	field_create_instance($instanceGroup);
+}
+/**
+ * Set the my_module_default_sports_list() function as the source of the 'default_sports' field
+ */
+function google_analytics_agency_update_7300() {
+	$field_name = 'field_agency_report_email';
+
+	// Get the current settings
+	$result = db_query('SELECT data FROM {field_config} WHERE field_name = :name', array(':name' => $field_name))->fetchField();
+
+	// Change the settings
+	$data = unserialize($result);
+	$data['settings']['max_length'] = '500';
+
+	// Write settings back to the database.
+	db_update('field_config')
+	  ->fields(array('data' => serialize($data)))
+	  ->condition('field_name', $field_name)
+	  ->execute();
+
+	// Update the value column in both the _data and _revision tables for the field
+	$new_field = array('type' => 'varchar', 'length' => 500);
+	$col_name = $field_name . '_value';
+
+	db_change_field("field_data_$field_name", $col_name, $col_name, $new_field);
+	db_change_field("field_revision_$field_name", $col_name, $col_name, $new_field);
+
+	// Flush the caches
+	drupal_flush_all_caches();
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function google_analytics_agency_uninstall() {
+	
+  $mail_system = variable_get('mail_system', array('default-system' => 'DefaultMailSystem'));
+  unset($mail_system['google_analytics_agency']);
+  variable_set('mail_system', $mail_system);
+
+  field_delete_field('agency_profile_id');
+  field_delete_field('agency_company');
+  field_delete_field('agency_groupings');
+  field_delete_field('field_agency_profile_url');
+  field_delete_field('field_agency_email_schedule');
+  field_delete_field('field_agency_report_email');
+
+
+  node_type_delete('google_analytics_agency');
+
+  $vid = db_select('taxonomy_vocabulary', 'tv')
+  ->fields('tv', array('vid'))
+  ->condition('machine_name', 'agency_company_taxonomy')
+  ->execute()
+  ->fetchField();
+  taxonomy_vocabulary_delete($vid);
+
+  $vid = db_select('taxonomy_vocabulary', 'tv')
+  ->fields('tv', array('vid'))
+  ->condition('machine_name', 'agency_groupings_taxonomy')
+  ->execute()
+  ->fetchField();
+  taxonomy_vocabulary_delete($vid);
+
+}

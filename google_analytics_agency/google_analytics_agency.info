@@ -1,0 +1,6 @@
+name = Google Analytics Agency
+description = "Create nodes with interface to access Google Analytics API statistics."
+core = 7.x
+scripts[] = date.js
+dependencies[] = google_analytics_reports
+version = 7.x-0.1-dev

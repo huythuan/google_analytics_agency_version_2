@@ -1,0 +1,776 @@
+<?php
+class GoogleAgencyMailSystem extends DefaultMailSystem {
+  public function format(array $message) {
+    $message['body'] = implode("\n\n", $message['body']);
+    $message['body'] = drupal_wrap_mail($message['body']);
+    return $message;
+  }
+}
+/**
+ * Implements preprocess html.
+ */
+function google_analytics_agency_preprocess_html(&$variables) { 
+	// drupal_add_js('http://ajax.googleapis.com/ajax/libs/jqueryui/1.11.1/jquery-ui.min.js', 'external');
+	 //drupal_add_css('http://ajax.googleapis.com/ajax/libs/jqueryui/1.11.1/themes/smoothness/jquery-ui.css', 'external');
+	
+}
+/**
+ * Implements hook_menu().
+ */
+
+function google_analytics_agency_menu() {
+	$menuitems['google-analytics-agency-report'] = array(
+		'title' => t('Google Analytics Agency Summary'),
+	    'page callback' => 'google_analytics_agency_summary',
+	    'access callback' => TRUE,
+	    'type' => MENU_CALLBACK,
+  );
+	$menuitems['google-analytics-agency-report-group/%'] = array(
+		'title' => t('Google Analytics Agency Summary'),
+	    'page callback' => 'google_analytics_agency_grouping',
+	    'access callback' => TRUE,
+	    'page arguments'  => array(1),
+	    'type' => MENU_CALLBACK,
+  );
+  $menuitems['admin/config/system/google-analytics-agency'] = array(
+    'title' => 'Google Analytics Agency',
+    'description' => 'Configure Email address to send.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('google_analytics_agency_admin'),
+    'file' => 'google_analytics_agency.pages.inc',
+    'access arguments' => array('administer google analytics agency'),
+  );
+  return $menuitems;
+}
+/**
+ * Implements hook_theme().
+ */
+
+function google_analytics_agency_theme() {
+  return array(
+   'google_analytics_agency_preview' => array(
+      'variables' => array('summary' => NULL,'grouping' => NULL),
+      'template' => 'google_analytics_agency_preview',
+    ),
+	'google_analytics_agency_send_mail' => array(
+	      'variables' => array('summary' => NULL,'date' =>NULL),
+	      'template' => 'google_analytics_agency_send_mail',
+	    ),
+	'google_analytics_agency_send_mail_summary' => array(
+		  'variables' => array('summary' => NULL,'date' =>NULL),
+		  'template' => 'google_analytics_agency_send_mail_summary',
+		),
+	'google_analytics_agency_company_view' => array(
+		  'variables' => array('summary' => NULL),
+		  'template' => 'google_analytics_agency_company_view',
+		),		
+  );
+}
+
+
+/**
+ * Implement hook_node_view().
+ *
+ * Add a preview of the document to node page.
+ */
+function google_analytics_agency_node_view($node, $view_mode) {	
+	if ($node->type == 'google_analytics_agency' && $view_mode == 'full') { 
+		drupal_add_js('http://ajax.googleapis.com/ajax/libs/jqueryui/1.11.1/jquery-ui.min.js', 'external');
+		drupal_add_css('http://ajax.googleapis.com/ajax/libs/jqueryui/1.11.1/themes/smoothness/jquery-ui.css', 'external');
+		$profile = field_get_items('node', $node, 'agency_profile_id');
+	    $profile = isset($profile[0]['value']) ? $profile[0]['value'] : 0;
+	//	print($profile);
+	    $tid = $node->agency_groupings['und'][0]['tid'];
+		$grouping['tid'] = $tid;
+		$grouping['name'] = taxonomy_term_load($tid)->name;
+		$node->content['google_preview'] = array(
+          '#theme' => 'google_analytics_agency_preview',
+		  '#summary' => _google_analytics_agency_process_data($profile),
+		  '#grouping' => $grouping,
+		  '#weight' => 15,
+        );
+	}
+}
+/**
+* Processing data
+* return array variables
+*/
+function _google_analytics_agency_process_data($profile) {		
+	$fromDate = isset($_GET['fromDate']) ? $_GET['fromDate'] : null;
+	$toDate = isset($_GET['toDate']) ? $_GET['toDate'] : null;
+	//echo $fromDate.'|'.$toDate;
+	$filterPage = isset($_GET['filterPage']) ? $_GET['filterPage'] : null;
+	$time['firstDay'] = strtotime($fromDate);
+	$time['lastDay'] = strtotime($toDate);
+	if($fromDate == null || $toDate =null || ($time['lastDay'] <= $time['firstDay']) ){
+		$time['firstDay'] = strtotime(date('Y-m-d', strtotime('first day of last month')));
+		$time['lastDay'] = strtotime(date('Y-m-d', strtotime('last day of last month')));
+	}
+	if($cached = cache_get('google_analytics_agency_'.$profile.$time['firstDay'].$time['lastDay'].$filterPage, 'cache')){
+    	$variables = $cached->data;
+  	}
+
+if(empty($variables)) {
+	$variables = array(
+	   'visit_chart' => _google_analytics_agency_visits($profile,$time),
+	    'usage' => _google_analytics_agency_usage($profile,$time),
+	    'pages' => _google_analytics_agency_top_pages($profile,$time,$filterPage),
+	    'referrals' => _google_analytics_agency_top_referrals($profile,$path = '',$time),
+	    'keywords' => _google_analytics_agency_top_keywords($profile,$path = '',$time),
+		'mobile' => _google_analytics_reports_multiple_mobile($profile,$path = '',$time),
+	  );
+	$cache_length = variable_get('google_analytics_reports_api_cache_length');
+	cache_set('google_analytics_agency_'.$profile.$time['firstDay'].$time['lastDay'].$filterPage, $variables, 'cache', time() + $cache_length); 
+	}	
+	$variables = array_merge($variables, $variables['usage']);
+	  if ($variables['sessions'] <= 0) {
+	    $variables['pages_per_visit'] = '0.00';
+	    $variables['new_visits'] = '0.00%';
+	    $variables['time_on_site'] = '0:00';
+	  }
+	  else {
+	    $variables['pages_per_visit'] = number_format(round($variables['pageviews'] / $variables['sessions'], 2), 2);
+	    $variables['new_visits'] = number_format(round(($variables['newUsers'] / $variables['sessions'])*100, 2), 2) . '%';
+	    $variables['time_on_site'] = format_interval($variables['sessionDuration'] / $variables['sessions']);
+	  }
+
+	  if ($variables['entrances'] <= 0) {
+	    $variables['bounces'] = '0.00%';
+	  }
+	  else {
+	    $variables['bounces'] = number_format(round(($variables['bounces'] / $variables['entrances'])*100, 2), 2) . '%';
+	  }
+
+	  $variables['entrances'] = number_format($variables['entrances']);
+	  $variables['pageviews'] = number_format($variables['pageviews']);
+
+	  $pages = array();
+	  foreach ($variables['pages'] as $page) {
+	    if ($page['pagePath'] == '/index.html') {
+	      $page['pagePath'] = '/';
+	    }
+	    $pages[] = l($page['pageTitle'], "http://$page[hostname]$page[pagePath]", array('external' => TRUE, 'html' => TRUE)) . ' - ' . format_plural($page['pageviews'], '1 View', '@views Views', array('@views' => number_format($page['pageviews'])));
+	  }
+	  $variables['pages'] = theme('item_list', array('items' => $pages, 'type' => 'ol'));
+
+	  $referrals = array();
+	  foreach ($variables['referrals'] as $referral) {
+	    $referrals[] = '<strong>' . $referral['source'] . '</strong> - ' . format_plural($referral['sessions'], '1 Visit', '@visits Visits', array('@visits' => number_format($referral['sessions'])));
+	  }
+	  $variables['referrals'] = theme('item_list', array('items' => $referrals, 'type' => 'ol'));
+
+	  $keywords = array();
+	  foreach ($variables['keywords'] as $keyword) {
+	    $keywords[] = '<strong>' . $keyword['keyword'] . '</strong> - ' . format_plural($keyword['sessions'], '1 Visit', '@visits Visits', array('@visits' => number_format($keyword['sessions'])));
+	  }
+	  $variables['keywords'] = theme('item_list', array('items' => $keywords, 'type' => 'ol'));
+	return $variables;
+}
+
+/**
+ * Renders an img element with a chart of the number of visits over the past 30 days.
+ */
+function _google_analytics_agency_visits($profile,$time) {
+  $params = array(
+    'metrics' => array('ga:sessions'),
+    'dimensions' => array('ga:date'),
+    'sort_metric' => array('ga:date'),
+    'start_date' => $time['firstDay'],
+    'end_date' => $time['lastDay'],
+    'profile_id' => $profile,
+  );
+  $feed = google_analytics_reports_api_report_data($params);
+  if ($feed->error) {
+    return FALSE;
+  }
+  $max_visits = 0;
+  $data = array();
+  foreach ($feed->results->rows as $row) {
+    $data[] = $row['sessions'];
+    $max_visits = max($row['sessions'], $max_visits);
+  }
+  $chart = array(
+    '#title' => '',
+    '#chart_id' => 'visits_large_30d',
+    '#data' => $data,
+    '#type' => CHART_TYPE_LINE . ':nda',
+    '#size' => chart_size(1000, 80),
+    '#adjust_resolution' => TRUE,
+    '#data_colors' => array('AAAAAA'),
+    '#chart_fill' => chart_fill('bg', '00000000'),
+    '#shape_markers' => array(
+      chart_shape_marker(0, 0, 'B', 0, $color = 'EEEEEE')),
+    '#line_styles' => array(chart_line_style(2, 10, 0)),
+  );
+  $last_day = end($feed->results->rows);
+  $title = t('The most sessions on a single day was @max. Yesterday there were @yesterday sessions.',
+    array(
+      '@max' => $max_visits,
+      '@yesterday' => $last_day['sessions'],
+    ));
+  $chart['#attributes'] = array(
+    'title' => $title,
+    'style' => 'height:' . $chart['#size']['#height'] . 'px; width:100%',
+  );
+  $output = theme('chart', array('chart' => $chart));
+  return $output;
+}
+
+/**
+ * Retrieves usage data.
+ */
+function _google_analytics_agency_usage($profile,$time) {
+  // Site usage.
+  $params = array(
+    'metrics' => array(
+      'ga:sessions',
+      'ga:bounces',
+      'ga:entrances',
+      'ga:pageviews',
+      'ga:sessionDuration',
+      'ga:newUsers',
+    ),
+    'start_date' => $time['firstDay'],
+    'end_date' => $time['lastDay'],
+    'profile_id' => $profile,
+  );
+  $feed = google_analytics_reports_api_report_data($params);
+  if ($feed->error) {
+    return FALSE;
+  }
+  return $feed->results->totalsForAllResults;
+}
+/**
+ * Retrieves top pages.
+ */
+function _google_analytics_agency_top_pages($profile,$time, $filterPage, $max_results = 10) {
+  $params = array(
+    'metrics' => array('ga:pageviews'),
+    'dimensions' => array('ga:pageTitle', 'ga:hostname', 'ga:pagePath'),
+    'sort_metric' => array('-ga:pageviews'),
+    'filters'=> array('ga:pagePath=~/'.$filterPage.'/*'),
+    'start_date' => $time['firstDay'],
+    'end_date' => $time['lastDay'],
+    'sort' => '-ga:pageviews',
+    'max_results' => 10,
+    'profile_id' => $profile,
+  );
+  $feed = google_analytics_reports_api_report_data($params);
+  if ($feed->error) {
+    return FALSE;
+  }
+  return $feed->results->rows;
+}
+
+/**
+ * Retrieves top referrals.
+ */
+function _google_analytics_agency_top_referrals($profile, $path = '',$time) {
+ $params = array(
+    'metrics' => array('ga:sessions'),
+    'dimensions' => array('ga:source', 'ga:medium'),
+    'sort_metric' => array('-ga:sessions'),
+    'filters' => 'ga:medium==referral',
+    'start_date' => $time['firstDay'],
+    'end_date' => $time['lastDay'],
+    'max_results' => 10,
+    'profile_id' => $profile,
+  );
+  if ($path) {
+    $params['filters'] .= ';' . _google_analytics_reports_path_filter($path);
+  }
+  $feed = google_analytics_reports_api_report_data($params);
+  if ($feed->error) {
+    return FALSE;
+  }
+  return $feed->results->rows;
+
+}
+
+/**
+ * Retrieves top keywords.
+ */
+function _google_analytics_agency_top_keywords($profile, $path = '',$time) {
+  $params = array(
+    'metrics' => array('ga:sessions'),
+    'dimensions' => array('ga:keyword'),
+    'sort_metric' => array('-ga:sessions'),
+    'start_date' => $time['firstDay'],
+    'end_date' => $time['lastDay'],
+    'filters' => 'ga:keyword!=(not set)',
+    'max_results' => 10,
+    'profile_id' => $profile,
+  );
+  if ($path) {
+    $params['filters'] .= ';' . _google_analytics_reports_path_filter($path);
+  }
+  $feed = google_analytics_reports_api_report_data($params);
+  if ($feed->error) {
+    return FALSE;
+  }
+  return $feed->results->rows;
+}
+
+/**
+ * Retrieves mobile usage.
+ */
+function _google_analytics_reports_multiple_mobile($profile,$path = '',$time) {
+  $params = array(
+ 'dimensions' => array('ga:deviceCategory'),
+    'metrics' => array('ga:sessions','ga:pageviews','ga:bounces', 'ga:entrances'),
+    'start_date' => $time['firstDay'],
+    'end_date' => $time['lastDay'],
+    'profile_id' => $profile,
+  );
+  $feed = google_analytics_agency_api_data($params, $cache_options = array());
+  if ($feed->error) {
+    return FALSE;
+  }
+  return $feed->results->rows;
+}
+
+
+/**
+ * Request report data.
+ *
+ * @param $params
+ *   An associative array containing:
+ *   - profile_id: required [default=variable_get('google_analytics_reports_profile_id')]
+ *   - metrics: required.
+ *   - dimensions: optional [default=none]
+ *   - sort_metric: optional [default=none]
+ *   - filters: optional [default=none]
+ *   - segment: optional [default=none]
+ *   - start_date: optional [default=GA release date]
+ *   - end_date: optional [default=today]
+ *   - start_index: optional [default=1]
+ *   - max_results: optional [default=10,000]
+ * @param $cache_options
+ *   An optional associative array containing:
+ *   - cid: optional [default=md5 hash]
+ *   - expire: optional [default=CACHE_TEMPORARY]
+ *   - refresh: optional [default=FALSE]
+ */
+function google_analytics_agency_api_data($params = array(), $cache_options = array()) {
+  if(isset($params['profile_id'])) {
+    $params['profile_id'] = 'ga:' .$params['profile_id'];
+  } else {
+    $params['profile_id'] = 'ga:' . variable_get('google_analytics_reports_api_profile_id', 0);
+  }
+
+  $ga_feed = google_analytics_reports_api_new_gafeed();
+
+  if ($ga_feed) {
+    $ga_feed->queryReportFeed($params, $cache_options);
+    return $ga_feed;
+  }
+  else {
+    drupal_set_message(t("There was an authentication error. Please check your Google API settings and try again."), 'error', FALSE);
+    $error = array('error' => TRUE);
+    return $error;
+  }
+}
+/*
+* get the summary report for all sites
+*/
+function google_analytics_agency_summary() {
+	$query = db_select('node', 'n'); 
+	$query->condition('n.type','google_analytics_agency');
+	$query->condition('n.status','1');
+	$query->join('field_data_agency_company', 'c', 'n.nid = c.entity_id');
+	$query->join('taxonomy_term_data', 't', 'c.agency_company_tid = t.tid');
+	$query->join('field_data_agency_profile_id', 'p', 'n.nid = p.entity_id');
+	$query->groupBy('n.nid');
+	$query->orderBy('t.name','ASC');
+	$query->fields("p", array("agency_profile_id_value"));
+	$query->fields("n", array("title"));
+	$query->fields("t", array("name"));
+    $results = $query->execute();
+	if (count($results) > 0) {
+		$companyName = '';
+		$output = '<div>';
+		$tableHeader = '<table style="width:100%"><tr><th>WebsiteName</th><th>Visits</th><th>UniqueVisitors</th><th>Pageviews</th><th>BounceRate</th></th><th>Time on Site</th></th><th>PercentageOfMobile</th></tr>';
+		$tableTail = '</table>';
+		foreach ($results as $value) {
+			if($companyName != $value->name){
+				if ($companyName !=''){
+					$output .= $tableTail;
+				}
+				$companyName = $value->name;
+				$output .='<p style="font-weight:bold">'.$value->name . '</p>';
+				$output .= $tableHeader;
+				$summary = _google_analytics_agency_process_data($value->agency_profile_id_value);
+				$totalUse = $summary['mobile'][1]['entrances'] + $summary['mobile'][0]['entrances'] + $summary['mobile'][2]['entrances'];
+				$mobile = number_format(round(($summary['mobile'][1]['entrances'] /$totalUse)*100, 2), 2) .'%';							
+				$output .='<tr><td>'.$value->title.'</td> <td>'.$summary['entrances'].'</td><td>'.number_format($summary['newUsers']).'</td><td>'.$summary['pageviews'].'</td> <td>'.$summary['bounces'].'</td> <td>'.$summary['time_on_site'].'</td> <td>'.$mobile.'</td></tr>';
+			}else{
+				$summary = _google_analytics_agency_process_data($value->agency_profile_id_value);
+				$totalUse = $summary['mobile'][1]['entrances'] + $summary['mobile'][0]['entrances'] + $summary['mobile'][2]['entrances'];
+				$mobile = number_format(round(($summary['mobile'][1]['entrances'] /$totalUse)*100, 2), 2) .'%';			
+			    $output .='<tr><td>'.$value->title.'</td> <td>'.$summary['entrances'].'</td><td>'.number_format($summary['newUsers']).'</td><td>'.$summary['pageviews'].'</td> <td>'.$summary['bounces'].'</td> <td>'.$summary['time_on_site'].'</td> <td>'.$mobile.'</td></tr>';		
+			}
+		}
+		
+     }
+	return theme('google_analytics_agency_company_view').$output.$tableTail.'</div>';
+}
+
+/*
+* get the summary report for all sites for mailing
+*/
+function google_analytics_agency_summary_mail() {
+	$query = db_select('node', 'n'); 
+	$query->condition('n.type','google_analytics_agency');
+	$query->condition('n.status','1');
+	$query->join('field_data_agency_company', 'c', 'n.nid = c.entity_id');
+	$query->join('taxonomy_term_data', 't', 'c.agency_company_tid = t.tid');
+	$query->join('field_data_agency_profile_id', 'p', 'n.nid = p.entity_id');
+	$query->groupBy('n.nid');
+	$query->orderBy('t.name','ASC');
+	$query->fields("p", array("agency_profile_id_value"));
+	$query->fields("n", array("title"));
+	$query->fields("t", array("name"));
+    $results = $query->execute();
+	if (count($results) > 0) {
+		$companyName = '';
+		$output = '<div>';
+		$tableHeader = '<table style="width:100%"><tr style = "background: #e5e4de;"><th>Website Name</th><th>Visits</th><th>Unique Visitors</th><th>Pageviews</th><th>Bounce Rate</th></th><th>Time on Site</th></th><th>Percentage of Mobile</th></tr>';
+		$tableTail = '</table>';
+		foreach ($results as $value) {
+			if($companyName != $value->name){
+				if ($companyName !=''){
+					$output .= $tableTail;
+				}
+				$companyName = $value->name;
+				$output .='<p style="font-weight:bold">'.$value->name . '</p>';
+				$output .= $tableHeader;
+				$summary = _google_analytics_agency_process_data($value->agency_profile_id_value);
+				$totalUse = $summary['mobile'][1]['entrances'] + $summary['mobile'][0]['entrances'] + $summary['mobile'][2]['entrances'];
+				$mobile = number_format(round(($summary['mobile'][1]['entrances'] /$totalUse)*100, 2), 2) .'%';							
+				$output .='<tr style = "background: #e5e4de;"><td>'.$value->title.'</td> <td>'.$summary['entrances'].'</td><td>'.$summary['newUsers'].'</td><td>'.$summary['pageviews'].'</td> <td>'.$summary['bounces'].'</td> <td>'.$summary['time_on_site'].'</td> <td>'.$mobile.'</td></tr>';
+			}else{
+				$summary = _google_analytics_agency_process_data($value->agency_profile_id_value);
+				$totalUse = $summary['mobile'][1]['entrances'] + $summary['mobile'][0]['entrances'] + $summary['mobile'][2]['entrances'];
+				$mobile = number_format(round(($summary['mobile'][1]['entrances'] /$totalUse)*100, 2), 2) .'%';				
+			    $output .='<tr style = "background: #e5e4de;"><td>'.$value->title.'</td> <td>'.$summary['entrances'].'</td><td>'.$summary['newUsers'].'</td><td>'.$summary['pageviews'].'</td> <td>'.$summary['bounces'].'</td> <td>'.$summary['time_on_site'].'</td> <td>'.$mobile.'</td></tr>';		
+			}
+		}
+		
+     }
+	return $output.$tableTail.'</div>';
+}
+
+/*Implements hook_cron()
+*
+*/
+
+function google_analytics_agency_cron(){
+
+}
+
+/*
+* Check time before send email
+* return True or False
+*/
+function google_analytics_agency_check_time($nid,$period){
+	$send = FALSE;
+	$query = db_select('google_analytics_agency', 'g'); 
+	$query->condition('g.nid',$nid);
+	$query->groupBy('g.nid');
+	$query->fields("g", array("last_send"));
+	$results = $query->execute();
+	$exist = $results->rowCount();
+	if($exist > 0) {
+		foreach ($results as $value) { 
+			//check send first day of each month date('01-m-Y') 
+				if((date('01-m-Y') == date('d-m-Y',time()))&&(date('01-m-Y')!=date('d-m-Y',$value->last_send) )){
+						db_update('google_analytics_agency') 
+							 ->fields(array(
+							   'last_send' => time(),
+							 ))
+							 ->condition('nid',$nid)
+							 ->execute();
+						$send = TRUE;
+				}else { 
+					//check send as set up
+					switch ($period)
+					{
+						case "daily":
+							if(strtotime('+1 day', $value->last_send ) < time()){
+								db_update('google_analytics_agency') 
+							  	->fields(array(
+							    	'last_send' => time(),
+							  		))
+							  			->condition('nid',$nid)
+							  			->execute();
+									$send = TRUE;
+								}
+								break;
+						case "weekly":
+							if(strtotime('+1 week', $value->last_send ) < time()){
+							     db_update('google_analytics_agency') 
+								    ->fields(array(
+								      'last_send' => time(),
+								    ))
+								    ->condition('nid',$nid)
+								    ->execute();
+							        $send = TRUE;
+						   		}
+								break;		
+								case "monthly":
+								if(strtotime('+1 month', $value->last_send ) < time()){
+									db_update('google_analytics_agency') 
+										->fields(array(
+									  'last_send' => time(),
+										))
+										->condition('nid',$nid)
+										->execute();
+										$send = TRUE;
+									}				
+					    			break;
+
+								}
+						}
+			}
+	}else {
+		$record = array();
+		$record['nid'] = $nid;
+		$record['last_send'] = time();
+		drupal_write_record('google_analytics_agency', $record);
+		$send = TRUE;
+	}
+   return 	$send;
+}
+/**
+ * Implements hook_mail().
+ */
+function google_analytics_agency_mail($key, &$message, $params) {
+    switch($key) {
+      case 'notice':
+        $message['headers']['MIME-Version'] = '1.0;';
+      	$message['headers']['Content-Type'] = 'text/html;';
+		$message['headers']['charset'] = 'utf-8;';		
+      	$message['subject'] = $params['subject'];
+      	$message['body'][] = $params['body'];
+      break;
+    }
+}
+function google_analytics_agency_process_mail($data){
+    if(!isset($data->summary)){
+		$params['subject'] = 'Google Analytics Agency Report For:'.$data->title;
+		$profile = $data->agency_profile_id_value;
+		$params['body'] = theme('google_analytics_agency_send_mail', array('summary' => _google_analytics_agency_process_data($profile), 'date'=> 		$data->reportDate,'template' => 'google_analytics_agency_send_mail'));
+    	$to = $data->field_agency_report_email_value;
+    	$from = 'BCI Interactive Media <ryan@bciinteractive.com>';
+    	$lang = language_default();
+    	drupal_mail('google_analytics_agency', 'notice', $to, $lang, $params, $from);
+		//	echo "hello1";
+	}else if($data->summary == 1){
+		$params['subject'] = 'Google Analytics Agency Report Summary:';
+		$params['body'] = theme('google_analytics_agency_send_mail_summary', array('summary' => google_analytics_agency_process_part($data), 'date'=> 		$data->reportDate,'template' => 'google_analytics_agency_send_mail_summary'));
+	    $to = $data->field_agency_report_email_value;
+	    $from = 'BCI Interactive Media <ryan@bciinteractive.com>';
+	    $lang = language_default();
+	    drupal_mail('google_analytics_agency', 'notice', $to, $lang, $params, $from);
+//	echo "hello2".$params['body'];
+//	echo 'Email:'.$to;
+	}else if($data->summary == 'request'){
+		$params['subject'] = 'Google Analytics Agency Report Summary:';
+		$params['body'] = theme('google_analytics_agency_send_mail_summary', array('summary' => google_analytics_agency_summary_mail($data), 'date'=> 		$data->reportDate,'template' => 'google_analytics_agency_send_mail_summary'));
+	    $to = $data->field_agency_report_email_value;
+	    $from = 'BCI Interactive Media <ryan@bciinteractive.com>';
+	    $lang = language_default();
+	    drupal_mail('google_analytics_agency', 'notice', $to, $lang, $params, $from);
+//	echo "hello2".$params['body'];
+//	echo 'Email:'.$to;
+	}
+
+}
+function google_analytics_agency_preprocess_node(&$variables) {
+	//print_r($variables);
+}
+
+/**
+* Output Google Analytics for group
+*/
+function google_analytics_agency_grouping($tid) {
+	$query = db_select('node', 'n'); 
+	$query->condition('n.type','google_analytics_agency');
+	$query->condition('n.status','1');
+	$query->join('field_data_agency_company', 'c', 'n.nid = c.entity_id');
+	$query->join('taxonomy_term_data', 't', 'c.agency_company_tid = t.tid');	
+	$query->join('field_data_agency_groupings', 'g', 'n.nid = g.entity_id');
+	$query->condition('g.agency_groupings_tid',$tid);
+	$query->join('field_data_agency_profile_id', 'p', 'n.nid = p.entity_id');
+	$query->groupBy('n.nid');
+	$query->orderBy('t.name','ASC');
+	$query->fields("p", array("agency_profile_id_value"));
+	$query->fields("n", array("title"));
+	$query->fields("t", array("name"));
+    $results = $query->execute();
+	if (count($results) > 0) {
+		$companyName = '';
+		$output = '<div style="font-weight:bold;font-size:1.3em;"> Group:'.taxonomy_term_load($tid)->name.'</div>';
+		$output .= '<div>';
+		$tableHeader = '<table style="width:100%"><tr><th>WebsiteName</th><th>Visits</th><th>UniqueVisitors</th><th>Pageviews</th><th>Bounce Rate</th></th><th>Time on Site</th></th><th>Percentage of Mobile</th></tr>';
+		$tableTail = '</table>';
+		foreach ($results as $value) {
+			if($companyName != $value->name){
+				if ($companyName !=''){
+					$output .= $tableTail;
+				}
+				$companyName = $value->name;
+				$output .='<p style="font-weight:bold"> Company:'.$value->name . '</p>';
+				$output .= $tableHeader;
+				$summary = _google_analytics_agency_process_data($value->agency_profile_id_value);
+				$mobile = number_format(round(($summary['entrances'] / $summary['mobile'][1]['entrances'])*100, 2), 2) .'%';								
+				$output .='<tr><td>'.$value->title.'</td> <td>'.$summary['entrances'].'</td> <td>'.number_format($summary['newUsers']).'</td><td>'.$summary['pageviews'].'</td> <td>'.$summary['bounces'].'</td> <td>'.$summary['time_on_site'].'</td> <td>'.$mobile.'</td></tr>';
+			}else{
+				$summary = _google_analytics_agency_process_data($value->agency_profile_id_value);
+				$mobile = number_format(round(($summary['entrances'] / $summary['mobile'][1]['entrances'])*100, 2), 2) .'%';				
+			    $output .='<tr><td>'.$value->title.'</td> <td>'.$summary['entrances'].'</td> <td>'.number_format($summary['newUsers']).'</td><td>'.$summary['pageviews'].'</td> <td>'.$summary['bounces'].'</td> <td>'.$summary['time_on_site'].'</td> <td>'.$mobile.'</td></tr>';		
+			}
+		}
+		
+     }
+	return theme('google_analytics_agency_company_view').$output.$tableTail.'</div>';
+}
+/**
+* Implement hook preprocess page
+*/
+function google_analytics_agency_preprocess_page(&$variables) {
+	if(arg(0)=='google-analytics-agency-report' || arg(0)=='google-analytics-agency-report-group'){
+		drupal_add_js('http://ajax.googleapis.com/ajax/libs/jqueryui/1.11.1/jquery-ui.min.js', 'external');
+		drupal_add_css('http://ajax.googleapis.com/ajax/libs/jqueryui/1.11.1/themes/smoothness/jquery-ui.css', 'external');
+	}
+}
+/*
+* Get email list from group field taxonomy
+* return list of email if it have otherwise return null
+*/
+function google_analytics_agency_get_group_email($nid){ 
+	$query = db_select('taxonomy_index', 't'); 
+	$query->condition('t.nid',$nid);
+	$query->groupBy('t.tid');
+	$query->fields("t", array("tid"));
+	$results = $query->execute();
+	$exist = $results->rowCount();
+	if($exist > 0) {
+		foreach ($results as $value) {
+			$email = _google_analytics_agency_get_group_taxonomy_email($value->tid);
+			if(isset($email)){
+				return $email;
+			}
+		}
+	}
+	
+	return NULL;
+}
+/*
+* get email list from taxonomy id
+*/
+function _google_analytics_agency_get_group_taxonomy_email($tid){
+	$query = db_select('field_data_google_agency_group_email', 'g'); 
+	$query->condition('g.entity_id',$tid);
+	$query->groupBy('g.entity_id');
+	$query->fields("g", array("google_agency_group_email_value"));
+	$results = $query->execute();
+	$exist = $results->rowCount();
+	if($exist > 0) {
+		foreach ($results as $value) {
+			return $value->google_agency_group_email_value;
+		}
+	}
+	return NULL;
+}
+/*
+* partly process data and store data in the variable for later send mail
+*/
+function google_analytics_agency_process_part($data) {
+	$query = db_select('node', 'n'); 
+	$query->condition('n.type','google_analytics_agency');
+	$query->condition('n.status','1');
+	$query->join('field_data_agency_company', 'c', 'n.nid = c.entity_id');
+	$query->join('taxonomy_term_data', 't', 'c.agency_company_tid = t.tid');
+	$query->join('field_data_agency_profile_id', 'p', 'n.nid = p.entity_id');
+	$query->groupBy('n.nid');
+	$query->orderBy('t.name','ASC');
+	$query->fields("p", array("agency_profile_id_value"));
+	$query->fields("n", array("title"));
+	$query->fields("t", array("name"));
+	$num_rows = $query->countQuery()->execute()->fetchField();
+	$part_1 = round($num_rows/2);
+	$part_2 = $num_rows - $part_1;
+	$i = 1;//seperate between two part
+    $results = $query->execute();
+	if (count($results) > 0) {
+		$companyName = '';
+		$output = '<div>';
+		$tableHeader = '<table style="width:100%"><tr style = "background: #e5e4de;"><th>Website Name</th><th>Visits</th><th>Unique Visitors</th><th>Pageviews</th><th>Bounce Rate</th></th><th>Time on Site</th></th><th>Percentage of Mobile</th></tr>';
+		$tableTail = '</table>';
+		foreach ($results as $value) {
+			if($data->part == 1 && $i <= $part_1) {
+			  	if($companyName != $value->name){
+					if ($companyName !=''){
+						$output .= $tableTail;
+					}
+					$companyName = $value->name;
+					$output .='<p style="font-weight:bold">'.$value->name . '</p>';
+					$output .= $tableHeader;
+					$summary = _google_analytics_agency_process_data($value->agency_profile_id_value);
+					$totalUse = $summary['mobile'][1]['entrances'] + $summary['mobile'][0]['entrances'] + $summary['mobile'][2]['entrances'];
+					$mobile = number_format(round(($summary['mobile'][1]['entrances'] /$totalUse)*100, 2), 2) .'%';							
+					$output .='<tr style = "background: #e5e4de;"><td>'.$value->title.'</td> <td>'.$summary['entrances'].'</td><td>'.$summary['newUsers'].'</td><td>'.$summary['pageviews'].'</td> <td>'.$summary['bounces'].'</td> <td>'.$summary['time_on_site'].'</td> <td>'.$mobile.'</td></tr>';
+				}else{
+					$summary = _google_analytics_agency_process_data($value->agency_profile_id_value);
+					$totalUse = $summary['mobile'][1]['entrances'] + $summary['mobile'][0]['entrances'] + $summary['mobile'][2]['entrances'];
+					$mobile = number_format(round(($summary['mobile'][1]['entrances'] /$totalUse)*100, 2), 2) .'%';				
+				    $output .='<tr style = "background: #e5e4de;"><td>'.$value->title.'</td> <td>'.$summary['entrances'].'</td><td>'.$summary['newUsers'].'</td><td>'.$summary['pageviews'].'</td> <td>'.$summary['bounces'].'</td> <td>'.$summary['time_on_site'].'</td> <td>'.$mobile.'</td></tr>';		
+				}
+			    //store the value for next day use
+				if($i == $part_1) {
+					variable_set($data->period, $output);
+				}
+			}else if($data->part == 2 && $i > $part_1) {
+				if($i == $part_1 +1) {
+					$output = variable_get($data->period);
+				}
+				if($companyName != $value->name){
+					if ($companyName !=''){
+						$output .= $tableTail;
+					}
+					$companyName = $value->name;
+					$output .='<p style="font-weight:bold">'.$value->name . '</p>';
+					$output .= $tableHeader;
+					$summary = _google_analytics_agency_process_data($value->agency_profile_id_value);
+					$totalUse = $summary['mobile'][1]['entrances'] + $summary['mobile'][0]['entrances'] + $summary['mobile'][2]['entrances'];
+					$mobile = number_format(round(($summary['mobile'][1]['entrances'] /$totalUse)*100, 2), 2) .'%';							
+					$output .='<tr style = "background: #e5e4de;"><td>'.$value->title.'</td> <td>'.$summary['entrances'].'</td><td>'.$summary['newUsers'].'</td><td>'.$summary['pageviews'].'</td> <td>'.$summary['bounces'].'</td> <td>'.$summary['time_on_site'].'</td> <td>'.$mobile.'</td></tr>';
+				}else{
+					$summary = _google_analytics_agency_process_data($value->agency_profile_id_value);
+					$totalUse = $summary['mobile'][1]['entrances'] + $summary['mobile'][0]['entrances'] + $summary['mobile'][2]['entrances'];
+					$mobile = number_format(round(($summary['mobile'][1]['entrances'] /$totalUse)*100, 2), 2) .'%';				
+				    $output .='<tr style = "background: #e5e4de;"><td>'.$value->title.'</td> <td>'.$summary['entrances'].'</td><td>'.$summary['newUsers'].'</td><td>'.$summary['pageviews'].'</td> <td>'.$summary['bounces'].'</td> <td>'.$summary['time_on_site'].'</td> <td>'.$mobile.'</td></tr>';		
+				}
+				//return value 
+			   if($i == $num_rows) {
+					$output .= $output.$tableTail.'</div>';
+			     }
+			}
+			$i++;
+		}
+     }
+    return $output;
+}
+/*
+* Request send email for summary page
+*/
+function google_analytics_agency_request_send_mail($fromDate, $toDate ) {
+	$_GET['fromDate'] = $fromDate;
+	$_GET['toDate'] = $toDate;
+	$emails = variable_get('google_analytics_agency_email_field');
+	$value->reportDate = 'Reports From: '.$_GET['fromDate'].' To: '.$_GET['toDate'];
+	$value->field_agency_report_email_value = $emails;
+	$value->summary = 'request';
+	google_analytics_agency_process_mail($value);
+}
